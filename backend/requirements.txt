@@ -1,0 +1,16 @@
+fastapi
+uvicorn[standard]
+sqlalchemy
+pydantic
+python-multipart
+python-jose[cryptography]
+passlib[bcrypt]
+python-dotenv
+alembic
+pydantic[email]
+google-cloud-translate
+google-cloud-texttospeech
+simpleaudio
+moviepy
+gtts
+Pillow
