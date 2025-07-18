@@ -191,11 +191,11 @@ export default function UserManagementPage() {
         });
       }
     } catch (error) {
-      toast({
+    toast({
         title: "Error",
         description: "Failed to delete user",
-        variant: "destructive",
-      });
+      variant: "destructive",
+    });
     }
   };
 
@@ -441,9 +441,9 @@ export default function UserManagementPage() {
                           🌐 All Stations
                         </Badge>
                       ) : (
-                        <Badge variant="outline">
-                          {user.station_code}
-                        </Badge>
+                      <Badge variant="outline">
+                        {user.station_code}
+                      </Badge>
                       )
                     ) : (
                       <span className="text-muted-foreground">-</span>

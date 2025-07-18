@@ -137,7 +137,7 @@ class StateLanguageMapping(StateLanguageMappingBase):
     updated_at: Optional[datetime] = None
 
     class Config:
-        from_attributes = True
+        from_attributes = True 
 
 # Audio File schemas
 class AudioFileBase(BaseModel):
@@ -218,4 +218,83 @@ class MultiLanguageAudioFile(MultiLanguageAudioFileBase):
     language_versions: List[MultiLanguageAudioVersion] = []
 
     class Config:
-        from_attributes = True 
+        from_attributes = True
+
+# Template Announcement schemas
+class TemplatePlaceholderBase(BaseModel):
+    placeholder_name: str
+    placeholder_type: str  # 'text', 'number', 'time', 'station'
+    is_required: bool = True
+    default_value: Optional[str] = None
+    description: Optional[str] = None
+
+class TemplatePlaceholderCreate(TemplatePlaceholderBase):
+    pass
+
+class TemplatePlaceholder(TemplatePlaceholderBase):
+    id: int
+    template_id: int
+
+    class Config:
+        from_attributes = True
+
+class AnnouncementTemplateBase(BaseModel):
+    title: str
+    category: str  # 'arrival', 'departure', 'delay', 'platform_change', 'general'
+    template_text: str
+
+class AnnouncementTemplateCreate(AnnouncementTemplateBase):
+    placeholders: List[TemplatePlaceholderCreate] = []
+
+class AnnouncementTemplateUpdate(BaseModel):
+    title: Optional[str] = None
+    category: Optional[str] = None
+    template_text: Optional[str] = None
+    is_active: Optional[bool] = None
+
+class AnnouncementTemplate(AnnouncementTemplateBase):
+    id: int
+    audio_file_path: Optional[str] = None
+    filename: Optional[str] = None
+    file_size: Optional[int] = None
+    duration: Optional[int] = None
+    created_by: int
+    is_active: bool
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+    creator: Optional[User] = None
+    placeholders: List[TemplatePlaceholder] = []
+
+    class Config:
+        from_attributes = True
+
+class GeneratedAnnouncementBase(BaseModel):
+    template_id: int
+    title: str
+    final_text: str
+    placeholder_values: str  # JSON string
+
+class GeneratedAnnouncementCreate(GeneratedAnnouncementBase):
+    pass
+
+class GeneratedAnnouncement(GeneratedAnnouncementBase):
+    id: int
+    audio_file_path: Optional[str] = None
+    filename: Optional[str] = None
+    file_size: Optional[int] = None
+    duration: Optional[int] = None
+    created_by: int
+    station_code: Optional[str] = None
+    is_active: bool
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+    creator: Optional[User] = None
+    template: Optional[AnnouncementTemplate] = None
+
+    class Config:
+        from_attributes = True
+
+class AnnouncementGenerationRequest(BaseModel):
+    template_id: int
+    placeholder_values: dict  # Dictionary of placeholder values
+    title: Optional[str] = None 

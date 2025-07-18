@@ -46,6 +46,18 @@ def run_migrations():
         print(f"❌ Error running user migration: {e}")
     
     print("\n" + "=" * 50)
+    
+    # Import and run template announcements migration
+    try:
+        from migrate_add_template_announcements import migrate_add_template_announcements
+        print("\n📋 Migration 4: Adding template announcements tables")
+        migrate_add_template_announcements()
+    except ImportError as e:
+        print(f"❌ Error importing template announcements migration: {e}")
+    except Exception as e:
+        print(f"❌ Error running template announcements migration: {e}")
+    
+    print("\n" + "=" * 50)
     print("🎉 All migrations completed!")
 
 if __name__ == "__main__":

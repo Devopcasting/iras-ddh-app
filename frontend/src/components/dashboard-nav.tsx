@@ -72,6 +72,12 @@ const links = [
     icon: Languages,
     adminOnly: true,
   },
+  {
+    href: '/dashboard/template-announcements',
+    label: 'Template Announcements',
+    icon: Megaphone,
+    adminOnly: true,
+  },
 ];
 
 export function DashboardNav() {

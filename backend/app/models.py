@@ -63,7 +63,7 @@ class StateLanguageMapping(Base):
     language = Column(String, nullable=False)
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now()) 
 
 class AudioFile(Base):
     __tablename__ = "audio_files"
@@ -119,4 +119,61 @@ class MultiLanguageAudioVersion(Base):
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
     
     # Relationship to parent audio file
-    parent_audio = relationship("MultiLanguageAudioFile", back_populates="language_versions") 
+    parent_audio = relationship("MultiLanguageAudioFile", back_populates="language_versions")
+
+class AnnouncementTemplate(Base):
+    __tablename__ = "announcement_templates"
+
+    id = Column(Integer, primary_key=True, index=True)
+    title = Column(String, nullable=False)
+    category = Column(String, nullable=False)  # 'arrival', 'departure', 'delay', 'platform_change', 'general'
+    template_text = Column(String, nullable=False)  # Template text with placeholders
+    audio_file_path = Column(String, nullable=True)  # Path to pre-recorded audio file
+    filename = Column(String, nullable=True, unique=True)  # Audio filename
+    file_size = Column(Integer, nullable=True)  # Size in bytes
+    duration = Column(Integer, nullable=True)  # Duration in seconds
+    created_by = Column(Integer, ForeignKey("users.id"), nullable=False)
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    
+    # Relationship to user
+    creator = relationship("User")
+    # Relationship to placeholders
+    placeholders = relationship("TemplatePlaceholder", back_populates="template", cascade="all, delete-orphan")
+
+class TemplatePlaceholder(Base):
+    __tablename__ = "template_placeholders"
+
+    id = Column(Integer, primary_key=True, index=True)
+    template_id = Column(Integer, ForeignKey("announcement_templates.id"), nullable=False)
+    placeholder_name = Column(String, nullable=False)  # 'train_number', 'platform_number', etc.
+    placeholder_type = Column(String, nullable=False)  # 'text', 'number', 'time', 'station'
+    is_required = Column(Boolean, default=True)
+    default_value = Column(String, nullable=True)
+    description = Column(String, nullable=True)  # Description of what this placeholder is for
+    
+    # Relationship to template
+    template = relationship("AnnouncementTemplate", back_populates="placeholders")
+
+class GeneratedAnnouncement(Base):
+    __tablename__ = "generated_announcements"
+
+    id = Column(Integer, primary_key=True, index=True)
+    template_id = Column(Integer, ForeignKey("announcement_templates.id"), nullable=False)
+    title = Column(String, nullable=False)
+    final_text = Column(String, nullable=False)  # Final text with placeholders filled
+    audio_file_path = Column(String, nullable=True)  # Path to generated audio file
+    filename = Column(String, nullable=True, unique=True)  # Audio filename
+    file_size = Column(Integer, nullable=True)  # Size in bytes
+    duration = Column(Integer, nullable=True)  # Duration in seconds
+    placeholder_values = Column(String, nullable=False)  # JSON string of placeholder values
+    created_by = Column(Integer, ForeignKey("users.id"), nullable=False)
+    station_code = Column(String, nullable=True)  # Station where announcement was created
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    
+    # Relationship to user and template
+    creator = relationship("User")
+    template = relationship("AnnouncementTemplate") 

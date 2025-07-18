@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Depends, HTTPException, status, Request
+from fastapi import FastAPI, Depends, HTTPException, status, Request, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -6,12 +6,15 @@ from fastapi.security import HTTPBearer
 from sqlalchemy.orm import Session
 from datetime import timedelta
 import os
+import json
+import time
 from typing import List
 
 from . import models, schemas, auth
 from .database import engine, get_db
 from .translation import translation_service
 from .audio_generator import audio_generator
+from .isl_video_generator import isl_generator
 
 # Create database tables
 models.Base.metadata.create_all(bind=engine)
@@ -762,63 +765,175 @@ async def generate_audio(
     Generate multi-language audio announcement using Google Cloud Text-to-Speech
     """
     try:
-        local_text = request.get("local_text")
-        english_text = request.get("english_text")
-        hindi_text = request.get("hindi_text")
-        local_language = request.get("local_language")
+        # Check if this is for "ALL" station with 4 languages
+        is_all_station = request.get("is_all_station", False)
         
-        if not english_text and not hindi_text:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="At least English or Hindi text is required"
-            )
-        
-        print(f"🎵 Generating audio for announcement")
-        print(f"Local ({local_language}): {local_text[:50] if local_text else 'None'}...")
-        print(f"English: {english_text[:50] if english_text else 'None'}...")
-        print(f"Hindi: {hindi_text[:50] if hindi_text else 'None'}...")
-        
-        # Prepare announcements dictionary
-        announcements = {}
-        
-        # Add local language if provided
-        if local_text and local_language:
-            # Map language name to code
-            language_map = {
-                'Marathi': 'mr',
-                'Gujarati': 'gu', 
-                'Hindi': 'hi',
-                'English': 'en',
-                'Tamil': 'ta',
-                'Telugu': 'te',
-                'Kannada': 'kn',
-                'Malayalam': 'ml',
-                'Bengali': 'bn',
-                'Punjabi': 'pa',
-                'Odia': 'or',
-                'Assamese': 'as'
-            }
-            lang_code = language_map.get(local_language, 'en')
-            announcements[lang_code] = local_text
-        
-        # Add English if provided
-        if english_text:
-            announcements['en'] = english_text
+        if is_all_station:
+            # Handle "ALL" station with 4 languages
+            marathi_text = request.get("marathi_text")
+            gujarati_text = request.get("gujarati_text")
+            english_text = request.get("english_text")
+            hindi_text = request.get("hindi_text")
             
-        # Add Hindi if provided
-        if hindi_text:
-            announcements['hi'] = hindi_text
+            if not english_text and not hindi_text and not marathi_text and not gujarati_text:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="At least one language text is required"
+                )
+            
+            print(f"🎵 Generating audio for ALL station announcement")
+            print(f"Marathi: {marathi_text[:50] if marathi_text else 'None'}...")
+            print(f"Gujarati: {gujarati_text[:50] if gujarati_text else 'None'}...")
+            print(f"English: {english_text[:50] if english_text else 'None'}...")
+            print(f"Hindi: {hindi_text[:50] if hindi_text else 'None'}...")
+            
+            # Prepare announcements dictionary for 4 languages
+            announcements = {}
+            
+            # Add all languages if provided
+            if marathi_text:
+                announcements['mr'] = marathi_text
+            if gujarati_text:
+                announcements['gu'] = gujarati_text
+            if english_text:
+                announcements['en'] = english_text
+            if hindi_text:
+                announcements['hi'] = hindi_text
+        else:
+            # Handle specific stations with existing logic
+            local_text = request.get("local_text")
+            english_text = request.get("english_text")
+            hindi_text = request.get("hindi_text")
+            local_language = request.get("local_language")
+            
+            if not english_text and not hindi_text:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="At least English or Hindi text is required"
+                )
+            
+            print(f"🎵 Generating audio for announcement")
+            print(f"Local ({local_language}): {local_text[:50] if local_text else 'None'}...")
+            print(f"English: {english_text[:50] if english_text else 'None'}...")
+            print(f"Hindi: {hindi_text[:50] if hindi_text else 'None'}...")
+            
+            # Prepare announcements dictionary
+            announcements = {}
+            
+            # Add local language if provided
+            if local_text and local_language:
+                # Map language name to code
+                language_map = {
+                    'Marathi': 'mr',
+                    'Gujarati': 'gu', 
+                    'Hindi': 'hi',
+                    'English': 'en',
+                    'Tamil': 'ta',
+                    'Telugu': 'te',
+                    'Kannada': 'kn',
+                    'Malayalam': 'ml',
+                    'Bengali': 'bn',
+                    'Punjabi': 'pa',
+                    'Odia': 'or',
+                    'Assamese': 'as'
+                }
+                lang_code = language_map.get(local_language, 'en')
+                announcements[lang_code] = local_text
+            
+            # Add English if provided
+            if english_text:
+                announcements['en'] = english_text
+                
+            # Add Hindi if provided
+            if hindi_text:
+                announcements['hi'] = hindi_text
         
         # Generate multi-language audio
         audio_content = audio_generator.generate_multi_language_audio(announcements)
         
-        # Save audio to file
+        # Check if audio content is valid
+        if not audio_content or len(audio_content) == 0:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Generated audio content is empty"
+            )
+        
+        print(f"🎵 Generated audio content size: {len(audio_content)} bytes")
+        
+        # Save audio to file in /var/www/html/audio_preview/
         import uuid
         filename = f"announcement_{uuid.uuid4().hex[:8]}.mp3"
-        audio_path = filename
         
-        with open(audio_path, 'wb') as f:
-            f.write(audio_content)
+        # Create the audio preview directory if it doesn't exist
+        audio_preview_dir = "/var/www/html/audio_preview"
+        
+        try:
+            # Try to create directory with proper error handling
+            if not os.path.exists(audio_preview_dir):
+                os.makedirs(audio_preview_dir, exist_ok=True)
+                print(f"📁 Created audio preview directory: {audio_preview_dir}")
+            
+            # Try to set permissions (may fail if not running as root)
+            try:
+                os.chmod(audio_preview_dir, 0o755)
+                print(f"🔐 Set directory permissions: {audio_preview_dir}")
+            except PermissionError:
+                print(f"⚠️  Could not set directory permissions (not running as root): {audio_preview_dir}")
+            
+        except PermissionError as e:
+            print(f"❌ Permission error creating directory: {e}")
+            # Fallback to current directory if permission denied
+            audio_preview_dir = os.path.dirname(os.path.abspath(__file__))
+            print(f"🔄 Falling back to backend directory: {audio_preview_dir}")
+        except Exception as e:
+            print(f"❌ Error creating directory: {e}")
+            # Fallback to current directory
+            audio_preview_dir = os.path.dirname(os.path.abspath(__file__))
+            print(f"🔄 Falling back to backend directory: {audio_preview_dir}")
+        
+        audio_path = os.path.join(audio_preview_dir, filename)
+        
+        print(f"🎵 Saving audio to: {audio_path}")
+        
+        try:
+            with open(audio_path, 'wb') as f:
+                f.write(audio_content)
+            
+            # Try to set file permissions (may fail if not running as root)
+            try:
+                os.chmod(audio_path, 0o644)
+                print(f"🔐 Set file permissions: {audio_path}")
+            except PermissionError:
+                print(f"⚠️  Could not set file permissions (not running as root): {audio_path}")
+                
+        except PermissionError as e:
+            print(f"❌ Permission error writing file: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Permission denied writing audio file: {str(e)}"
+            )
+        except Exception as e:
+            print(f"❌ Error writing file: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Error writing audio file: {str(e)}"
+            )
+        
+        # Verify file was created and has content
+        if not os.path.exists(audio_path):
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to save audio file"
+            )
+        
+        file_size = os.path.getsize(audio_path)
+        print(f"🎵 Saved audio file size: {file_size} bytes")
+        
+        if file_size == 0:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Saved audio file is empty"
+            )
         
         # Return the audio file path and URL
         audio_url = f"/audio/{filename}"
@@ -855,13 +970,22 @@ async def serve_audio(
                 detail="Only MP3 files are allowed"
             )
         
-        # Look for the audio file in the current directory
-        audio_path = filename
+        # Look for the audio file in the audio preview directory or fallback to backend directory
+        audio_preview_dir = "/var/www/html/audio_preview"
+        audio_path = os.path.join(audio_preview_dir, filename)
+        
+        # If not found in audio preview directory, try backend directory
+        if not os.path.exists(audio_path):
+            backend_dir = os.path.dirname(os.path.abspath(__file__))
+            audio_path = os.path.join(backend_dir, filename)
+            print(f"🔄 Looking for audio file in backend directory: {audio_path}")
+        else:
+            print(f"🎵 Looking for audio file at: {audio_path}")
         
         if not os.path.exists(audio_path):
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail="Audio file not found"
+                detail=f"Audio file not found at {audio_path}"
             )
         
         return FileResponse(
@@ -878,6 +1002,251 @@ async def serve_audio(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error serving audio: {str(e)}"
         )
+
+# Audio Cleanup Endpoint
+@app.post("/audio/cleanup")
+async def cleanup_audio_files(
+    current_user: models.User = Depends(auth.get_current_user)
+):
+    """
+    Clean up old audio files from the audio preview directory
+    """
+    try:
+        audio_preview_dir = "/var/www/html/audio_preview"
+        backend_dir = os.path.dirname(os.path.abspath(__file__))
+        
+        cleaned_count = 0
+        
+        # Clean up audio preview directory if it exists
+        if os.path.exists(audio_preview_dir):
+            audio_files = [f for f in os.listdir(audio_preview_dir) if f.endswith('.mp3')]
+            for filename in audio_files:
+                file_path = os.path.join(audio_preview_dir, filename)
+                try:
+                    os.remove(file_path)
+                    cleaned_count += 1
+                    print(f"🗑️ Cleaned up audio file from preview directory: {filename}")
+                except Exception as e:
+                    print(f"❌ Error cleaning up {filename} from preview directory: {e}")
+        
+        # Also clean up backend directory
+        if os.path.exists(backend_dir):
+            audio_files = [f for f in os.listdir(backend_dir) if f.endswith('.mp3')]
+            for filename in audio_files:
+                file_path = os.path.join(backend_dir, filename)
+                try:
+                    os.remove(file_path)
+                    cleaned_count += 1
+                    print(f"🗑️ Cleaned up audio file from backend directory: {filename}")
+                except Exception as e:
+                    print(f"❌ Error cleaning up {filename} from backend directory: {e}")
+        
+        return {
+            "message": f"Cleaned up {cleaned_count} audio files",
+            "cleaned_count": cleaned_count
+        }
+        
+    except Exception as e:
+        print(f"❌ Error in cleanup: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error cleaning up audio files: {str(e)}"
+        )
+
+@app.post("/generate-isl-video")
+async def generate_isl_video(
+    request: dict,
+    current_user: models.User = Depends(auth.get_current_user)
+):
+    """Generate ISL video from English text"""
+    try:
+        english_text = request.get("english_text", "").strip()
+        
+        if not english_text:
+            raise HTTPException(status_code=400, detail="English text is required")
+        
+        # Create ISL videos directory if it doesn't exist
+        isl_videos_dir = "/var/www/html/isl_videos"
+        try:
+            os.makedirs(isl_videos_dir, exist_ok=True)
+            # Set permissions for web server access
+            os.chmod(isl_videos_dir, 0o755)
+            # Try to set ownership to current user if possible
+            try:
+                import pwd
+                current_uid = os.getuid()
+                os.chown(isl_videos_dir, current_uid, -1)
+            except (ImportError, OSError):
+                pass  # Skip ownership change if not possible
+        except PermissionError:
+            # Fallback to backend directory if permission denied
+            isl_videos_dir = "isl_videos"
+            os.makedirs(isl_videos_dir, exist_ok=True)
+        
+        # Generate unique filename
+        import uuid
+        filename = f"isl_announcement_{uuid.uuid4().hex[:8]}.mp4"
+        output_path = os.path.join(isl_videos_dir, filename)
+        
+        # Generate audio files for all languages if requested
+        audio_files = {}
+        if request.get("include_audio", True):
+            try:
+                # Generate audio for each language
+                languages = {
+                    'english': 'en',
+                    'hindi': 'hi', 
+                    'marathi': 'mr',
+                    'gujarati': 'gu'
+                }
+                
+                for lang_name, lang_code in languages.items():
+                    # Generate audio using the audio generator
+                    audio_content = audio_generator.generate_audio(english_text, lang_code)
+                    
+                    # Save audio to temporary file
+                    temp_audio_path = f"/tmp/isl_audio_{lang_name}_{uuid.uuid4().hex[:8]}.mp3"
+                    with open(temp_audio_path, 'wb') as f:
+                        f.write(audio_content)
+                    
+                    audio_files[lang_name] = temp_audio_path
+                    print(f"Generated audio for {lang_name}: {temp_audio_path}")
+                
+            except Exception as e:
+                print(f"Error generating audio files: {e}")
+                # Continue without audio if there's an error
+        
+        # Generate ISL video with audio
+        result_path = isl_generator.generate_isl_video(english_text, output_path, audio_files)
+        
+        if not result_path:
+            raise HTTPException(status_code=500, detail="Failed to generate ISL video")
+        
+        # Get file size
+        file_size = os.path.getsize(result_path) if os.path.exists(result_path) else 0
+        
+        # Clean up temporary audio files
+        for audio_path in audio_files.values():
+            try:
+                if os.path.exists(audio_path):
+                    os.unlink(audio_path)
+                    print(f"Cleaned up temporary audio file: {audio_path}")
+            except Exception as e:
+                print(f"Error cleaning up audio file {audio_path}: {e}")
+        
+        return {
+            "success": True,
+            "filename": filename,
+            "file_path": result_path,
+            "file_size": file_size,
+            "video_url": f"/isl-videos/{filename}"
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error generating ISL video: {str(e)}")
+
+@app.get("/isl-videos/{filename}")
+async def serve_isl_video(filename: str):
+    """Serve ISL video files (public endpoint for video playback)"""
+    try:
+        # Security: only allow MP4 files
+        if not filename.endswith('.mp4'):
+            raise HTTPException(status_code=400, detail="Only MP4 files are allowed")
+        
+        # Security: only allow ISL announcement files
+        if not filename.startswith('isl_announcement_'):
+            raise HTTPException(status_code=400, detail="Invalid filename format")
+        
+        # Try to serve from /var/www/html/isl_videos/ first
+        video_path = f"/var/www/html/isl_videos/{filename}"
+        if os.path.exists(video_path):
+            return FileResponse(
+                video_path,
+                media_type="video/mp4",
+                headers={"Content-Disposition": f"inline; filename={filename}"}
+            )
+        
+        # Fallback to backend directory
+        video_path = f"isl_videos/{filename}"
+        if os.path.exists(video_path):
+            return FileResponse(
+                video_path,
+                media_type="video/mp4",
+                headers={"Content-Disposition": f"inline; filename={filename}"}
+            )
+        
+        raise HTTPException(status_code=404, detail="ISL video file not found")
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error serving ISL video: {str(e)}")
+
+@app.delete("/isl-videos/{filename}")
+async def delete_isl_video(
+    filename: str,
+    current_user: models.User = Depends(auth.get_current_user)
+):
+    """Delete an ISL video file"""
+    try:
+        # Try to delete from /var/www/html/isl_videos/ first
+        video_path = f"/var/www/html/isl_videos/{filename}"
+        if os.path.exists(video_path):
+            os.remove(video_path)
+            return {"message": f"ISL video file {filename} deleted successfully"}
+        
+        # Fallback to backend directory
+        video_path = f"isl_videos/{filename}"
+        if os.path.exists(video_path):
+            os.remove(video_path)
+            return {"message": f"ISL video file {filename} deleted successfully"}
+        
+        raise HTTPException(status_code=404, detail="ISL video file not found")
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error deleting ISL video file: {str(e)}")
+
+@app.post("/isl-videos/cleanup")
+async def cleanup_isl_video_files(
+    current_user: models.User = Depends(auth.get_current_user)
+):
+    """Clean up old ISL video files"""
+    try:
+        import time
+        current_time = time.time()
+        max_age = 3600  # 1 hour in seconds
+        
+        cleaned_files = []
+        
+        # Clean up from /var/www/html/isl_videos/ first
+        isl_videos_dir = "/var/www/html/isl_videos"
+        if os.path.exists(isl_videos_dir):
+            for filename in os.listdir(isl_videos_dir):
+                if filename.endswith('.mp4'):
+                    file_path = os.path.join(isl_videos_dir, filename)
+                    file_age = current_time - os.path.getmtime(file_path)
+                    if file_age > max_age:
+                        os.remove(file_path)
+                        cleaned_files.append(filename)
+        
+        # Clean up from backend directory
+        isl_videos_dir = "isl_videos"
+        if os.path.exists(isl_videos_dir):
+            for filename in os.listdir(isl_videos_dir):
+                if filename.endswith('.mp4'):
+                    file_path = os.path.join(isl_videos_dir, filename)
+                    file_age = current_time - os.path.getmtime(file_path)
+                    if file_age > max_age:
+                        os.remove(file_path)
+                        cleaned_files.append(filename)
+        
+        return {
+            "message": f"Cleaned up {len(cleaned_files)} old ISL video files",
+            "cleaned_files": cleaned_files
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error cleaning up ISL video files: {str(e)}")
 
 # Audio File Deletion Endpoint
 @app.delete("/audio/{filename}")
@@ -896,14 +1265,22 @@ async def delete_audio(
                 detail="Only MP3 files are allowed"
             )
         
-        # Look for the audio file in the current directory
-        audio_path = filename
+        # Look for the audio file in the audio preview directory or fallback to backend directory
+        audio_preview_dir = "/var/www/html/audio_preview"
+        audio_path = os.path.join(audio_preview_dir, filename)
+        
+        # If not found in audio preview directory, try backend directory
+        if not os.path.exists(audio_path):
+            backend_dir = os.path.dirname(os.path.abspath(__file__))
+            audio_path = os.path.join(backend_dir, filename)
+            print(f"🔄 Looking for audio file to delete in backend directory: {audio_path}")
+        else:
+            print(f"🎵 Looking for audio file to delete at: {audio_path}")
         
         if not os.path.exists(audio_path):
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Audio file not found"
-            )
+            # File doesn't exist, but that's okay - it may have been cleaned up already
+            print(f"ℹ️ Audio file not found (already deleted): {filename}")
+            return {"message": "Audio file not found (may have been already deleted)"}
         
         # Delete the file
         os.remove(audio_path)
@@ -1501,6 +1878,334 @@ def get_or_create_state_language_mapping(db: Session, state: str) -> str:
         print(f"❌ Error in get_or_create_state_language_mapping: {e}")
         # Return default language if mapping creation fails
         return "Hindi"
+
+# Template Announcements Endpoints
+@app.post("/announcement-templates", response_model=schemas.AnnouncementTemplate)
+async def create_announcement_template(
+    template_data: schemas.AnnouncementTemplateCreate,
+    current_user: models.User = Depends(auth.get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Create a new announcement template (admin only)"""
+    # Only admin can create templates
+    if current_user.role != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not enough permissions"
+        )
+    
+    try:
+        # Create template
+        db_template = models.AnnouncementTemplate(
+            title=template_data.title,
+            category=template_data.category,
+            template_text=template_data.template_text,
+            created_by=current_user.id
+        )
+        db.add(db_template)
+        db.commit()
+        db.refresh(db_template)
+        
+        # Create placeholders
+        for placeholder_data in template_data.placeholders:
+            db_placeholder = models.TemplatePlaceholder(
+                template_id=db_template.id,
+                placeholder_name=placeholder_data.placeholder_name,
+                placeholder_type=placeholder_data.placeholder_type,
+                is_required=placeholder_data.is_required,
+                default_value=placeholder_data.default_value,
+                description=placeholder_data.description
+            )
+            db.add(db_placeholder)
+        
+        db.commit()
+        db.refresh(db_template)
+        
+        return db_template
+        
+    except Exception as e:
+        db.rollback()
+        print(f"❌ Error creating announcement template: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to create announcement template: {str(e)}"
+        )
+
+@app.get("/announcement-templates", response_model=List[schemas.AnnouncementTemplate])
+async def get_announcement_templates(
+    current_user: models.User = Depends(auth.get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get all announcement templates (available to all authenticated users)"""
+    templates = db.query(models.AnnouncementTemplate).filter(
+        models.AnnouncementTemplate.is_active == True
+    ).all()
+    return templates
+
+@app.get("/announcement-templates/{template_id}", response_model=schemas.AnnouncementTemplate)
+async def get_announcement_template(
+    template_id: int,
+    current_user: models.User = Depends(auth.get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get a specific announcement template"""
+    template = db.query(models.AnnouncementTemplate).filter(
+        models.AnnouncementTemplate.id == template_id,
+        models.AnnouncementTemplate.is_active == True
+    ).first()
+    
+    if not template:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Announcement template not found"
+        )
+    
+    return template
+
+@app.put("/announcement-templates/{template_id}", response_model=schemas.AnnouncementTemplate)
+async def update_announcement_template(
+    template_id: int,
+    template_update: schemas.AnnouncementTemplateUpdate,
+    current_user: models.User = Depends(auth.get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Update an announcement template (admin only)"""
+    # Only admin can update templates
+    if current_user.role != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not enough permissions"
+        )
+    
+    db_template = db.query(models.AnnouncementTemplate).filter(
+        models.AnnouncementTemplate.id == template_id
+    ).first()
+    
+    if not db_template:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Announcement template not found"
+        )
+    
+    # Update template fields
+    for field, value in template_update.dict(exclude_unset=True).items():
+        setattr(db_template, field, value)
+    
+    db.commit()
+    db.refresh(db_template)
+    return db_template
+
+@app.delete("/announcement-templates/{template_id}")
+async def delete_announcement_template(
+    template_id: int,
+    current_user: models.User = Depends(auth.get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Delete an announcement template (admin only)"""
+    # Only admin can delete templates
+    if current_user.role != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not enough permissions"
+        )
+    
+    db_template = db.query(models.AnnouncementTemplate).filter(
+        models.AnnouncementTemplate.id == template_id
+    ).first()
+    
+    if not db_template:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Announcement template not found"
+        )
+    
+    try:
+        # Soft delete
+        db_template.is_active = False
+        db.commit()
+        
+        return {"message": f"Announcement template '{db_template.title}' deleted successfully"}
+        
+    except Exception as e:
+        db.rollback()
+        print(f"❌ Error deleting announcement template: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to delete announcement template: {str(e)}"
+        )
+
+@app.post("/announcement-templates/{template_id}/upload-audio")
+async def upload_template_audio(
+    template_id: int,
+    file: UploadFile = File(...),
+    current_user: models.User = Depends(auth.get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Upload audio file for an announcement template (admin only)"""
+    # Only admin can upload audio
+    if current_user.role != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not enough permissions"
+        )
+    
+    # Validate file type
+    if not file.content_type.startswith('audio/'):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="File must be an audio file"
+        )
+    
+    db_template = db.query(models.AnnouncementTemplate).filter(
+        models.AnnouncementTemplate.id == template_id
+    ).first()
+    
+    if not db_template:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Announcement template not found"
+        )
+    
+    try:
+        # Create audio directory if it doesn't exist
+        audio_dir = "backend/static/template_audio"
+        os.makedirs(audio_dir, exist_ok=True)
+        
+        # Generate unique filename
+        file_extension = os.path.splitext(file.filename)[1]
+        filename = f"template_{template_id}_{int(time.time())}{file_extension}"
+        file_path = os.path.join(audio_dir, filename)
+        
+        # Save file
+        with open(file_path, "wb") as buffer:
+            content = await file.read()
+            buffer.write(content)
+        
+        # Update template with audio file info
+        db_template.audio_file_path = file_path
+        db_template.filename = filename
+        db_template.file_size = len(content)
+        
+        db.commit()
+        db.refresh(db_template)
+        
+        return {
+            "message": "Audio file uploaded successfully",
+            "filename": filename,
+            "file_size": len(content)
+        }
+        
+    except Exception as e:
+        print(f"❌ Error uploading template audio: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to upload audio file: {str(e)}"
+        )
+
+@app.post("/announcements/generate", response_model=schemas.GeneratedAnnouncement)
+async def generate_announcement(
+    request: schemas.AnnouncementGenerationRequest,
+    current_user: models.User = Depends(auth.get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Generate an announcement from a template with placeholder values"""
+    # Get the template
+    template = db.query(models.AnnouncementTemplate).filter(
+        models.AnnouncementTemplate.id == request.template_id,
+        models.AnnouncementTemplate.is_active == True
+    ).first()
+    
+    if not template:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Announcement template not found"
+        )
+    
+    try:
+        # Replace placeholders in template text
+        final_text = template.template_text
+        for placeholder_name, value in request.placeholder_values.items():
+            placeholder_pattern = f"{{{placeholder_name}}}"
+            final_text = final_text.replace(placeholder_pattern, str(value))
+        
+        # Create generated announcement record
+        db_announcement = models.GeneratedAnnouncement(
+            template_id=template.id,
+            title=request.title or f"Generated from {template.title}",
+            final_text=final_text,
+            placeholder_values=json.dumps(request.placeholder_values),
+            created_by=current_user.id,
+            station_code=current_user.station_code
+        )
+        db.add(db_announcement)
+        db.commit()
+        db.refresh(db_announcement)
+        
+        return db_announcement
+        
+    except Exception as e:
+        db.rollback()
+        print(f"❌ Error generating announcement: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to generate announcement: {str(e)}"
+        )
+
+@app.get("/generated-announcements", response_model=List[schemas.GeneratedAnnouncement])
+async def get_generated_announcements(
+    current_user: models.User = Depends(auth.get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get all generated announcements (filtered by user's station if operator)"""
+    query = db.query(models.GeneratedAnnouncement).filter(
+        models.GeneratedAnnouncement.is_active == True
+    )
+    
+    # If operator, only show announcements for their station or "ALL" station
+    if current_user.role == "operator" and current_user.station_code != "ALL":
+        query = query.filter(
+            models.GeneratedAnnouncement.station_code == current_user.station_code
+        )
+    
+    announcements = query.all()
+    return announcements
+
+@app.get("/announcement-templates/{template_id}/play")
+async def play_template_audio(
+    template_id: int,
+    current_user: models.User = Depends(auth.get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Serve audio file for an announcement template"""
+    template = db.query(models.AnnouncementTemplate).filter(
+        models.AnnouncementTemplate.id == template_id,
+        models.AnnouncementTemplate.is_active == True
+    ).first()
+    
+    if not template or not template.audio_file_path:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Template audio file not found"
+        )
+    
+    try:
+        if os.path.exists(template.audio_file_path):
+            return FileResponse(
+                template.audio_file_path,
+                media_type="audio/mpeg",
+                filename=template.filename
+            )
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Audio file not found on disk"
+            )
+    except Exception as e:
+        print(f"❌ Error serving template audio: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error serving template audio: {str(e)}"
+        )
 
 # Global exception handler
 @app.exception_handler(Exception)

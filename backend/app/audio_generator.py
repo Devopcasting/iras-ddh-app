@@ -48,8 +48,15 @@ class AudioGenerator:
         """Initialize the Google Cloud TTS client if not already done"""
         if not self._initialized:
             try:
+                # Try to use the credentials file if it exists
+                credentials_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'isl.json')
+                if os.path.exists(credentials_path):
+                    os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = credentials_path
+                    logger.info(f"Using Google Cloud credentials from: {credentials_path}")
+                
                 self.client = texttospeech.TextToSpeechClient()
                 self._initialized = True
+                logger.info("Google Cloud TTS client initialized successfully")
             except Exception as e:
                 logger.error(f"Failed to initialize Google Cloud TTS client: {e}")
                 raise RuntimeError("Google Cloud TTS client initialization failed. Please check your credentials.")
